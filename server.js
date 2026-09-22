@@ -156,8 +156,11 @@ function publicState(row) {
 
 function releaseContractHeaders(req, res) {
   const requestedVersion = String(req.get('x-astroquiz-version') || '').trim();
-  if (requestedVersion && requestedVersion !== ASTROQUIZ_CONTRACT.version) {
-    return json(res, { error: 'unsupported_app_version' }, 426);
+  if (requestedVersion !== ASTROQUIZ_CONTRACT.version) {
+    return json(res, {
+      error: 'unsupported_app_version',
+      expected: ASTROQUIZ_CONTRACT.version,
+    }, 426);
   }
   return null;
 }
@@ -324,9 +327,9 @@ app.post('/v1/round/start', async (req, res) => {
 
     const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/round/start');
     if (!fresh) {
-      if (cachedReceiptResponse(res, receipt)) {
+      if (receipt?.status === 'completed' && receipt.response_json != null) {
         await client.query('COMMIT');
-        return undefined;
+        return json(res, receipt.response_json, Number(receipt.response_status || 200));
       }
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
@@ -408,6 +411,9 @@ app.post('/v1/round', async (req, res) => {
   }
 
   const runId = req.body.runId.trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(runId)) {
+    return json(res, { error: 'invalid_run_id' }, 400);
+  }
 
   const validation = validateRound(req.body, QUESTION_MAP);
   if (!validation.ok) return json(res, { error: validation.error }, 400);
@@ -418,9 +424,9 @@ app.post('/v1/round', async (req, res) => {
 
     const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/round');
     if (!fresh) {
-      if (cachedReceiptResponse(res, receipt)) {
+      if (receipt?.status === 'completed' && receipt.response_json != null) {
         await client.query('COMMIT');
-        return undefined;
+        return json(res, receipt.response_json, Number(receipt.response_status || 200));
       }
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
@@ -608,9 +614,9 @@ app.post('/v1/life/consume', async (req, res) => {
 
     const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/life/consume');
     if (!fresh) {
-      if (cachedReceiptResponse(res, receipt)) {
+      if (receipt?.status === 'completed' && receipt.response_json != null) {
         await client.query('COMMIT');
-        return undefined;
+        return json(res, receipt.response_json, Number(receipt.response_status || 200));
       }
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
@@ -678,9 +684,9 @@ app.post('/v1/purchase', async (req, res) => {
 
     const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/purchase');
     if (!fresh) {
-      if (cachedReceiptResponse(res, receipt)) {
+      if (receipt?.status === 'completed' && receipt.response_json != null) {
         await client.query('COMMIT');
-        return undefined;
+        return json(res, receipt.response_json, Number(receipt.response_status || 200));
       }
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
