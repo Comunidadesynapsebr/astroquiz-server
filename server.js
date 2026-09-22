@@ -311,10 +311,6 @@ app.post('/v1/round/start', async (req, res) => {
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
     }
-    if (receipt?.status === 'processing') {
-      await client.query('ROLLBACK');
-      return json(res, { error: 'request_in_progress' }, 409);
-    }
 
     const playerResult = await client.query(
       'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
@@ -406,10 +402,6 @@ app.post('/v1/round', async (req, res) => {
         await client.query('COMMIT');
         return undefined;
       }
-      await client.query('ROLLBACK');
-      return json(res, { error: 'request_in_progress' }, 409);
-    }
-    if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
     }
@@ -594,10 +586,6 @@ app.post('/v1/life/consume', async (req, res) => {
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
     }
-    if (receipt?.status === 'processing') {
-      await client.query('ROLLBACK');
-      return json(res, { error: 'request_in_progress' }, 409);
-    }
 
     const playerResult = await client.query(
       'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
@@ -665,10 +653,6 @@ app.post('/v1/purchase', async (req, res) => {
         await client.query('COMMIT');
         return undefined;
       }
-      await client.query('ROLLBACK');
-      return json(res, { error: 'request_in_progress' }, 409);
-    }
-    if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
       return json(res, { error: 'request_in_progress' }, 409);
     }
