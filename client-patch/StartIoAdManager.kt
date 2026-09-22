@@ -9,6 +9,7 @@ import com.startapp.sdk.adsbase.StartAppAd
 import com.startapp.sdk.adsbase.StartAppSDK
 import com.startapp.sdk.adsbase.adlisteners.AdEventListener
 import com.startapp.sdk.adsbase.StartAppAd.AdMode
+import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 object StartIoAdManager {
@@ -23,8 +24,18 @@ object StartIoAdManager {
     @Volatile private var rewardedAd: StartAppAd? = null
     @Volatile private var showing = false
     @Volatile private var questionCount = 0
+    @Volatile private var activityRef: WeakReference<Activity>? = null
+    @Volatile private var adOwnerActivityId: Int = 0
 
     fun initialize(context: Context) {
+        (context as? Activity)?.let {
+            val previous = activityRef?.get()
+            activityRef = WeakReference(it)
+            if (previous != null && previous !== it) {
+                clearAdStateInternal()
+            }
+        }
+
         if (initialized || initializing) return
         initializing = true
 
@@ -34,8 +45,8 @@ object StartIoAdManager {
                 .setCallback {
                     initialized = true
                     initializing = false
-                    preloadInterstitial(context.applicationContext)
-                    preloadRewarded(context.applicationContext)
+                    preloadInterstitial(context)
+                    preloadRewarded(context)
                 }
                 .init()
         }.onFailure {
@@ -64,14 +75,16 @@ object StartIoAdManager {
     }
 
     private fun preloadInterstitial(context: Context) {
+        val activity = (context as? Activity) ?: activityRef?.get() ?: return
         if (!initialized || loadingInterstitial || interstitialAd != null) return
         loadingInterstitial = true
 
         runCatching {
-            val ad = StartAppAd(context)
+            val ad = StartAppAd(activity)
             ad.loadAd(object : AdEventListener {
                 override fun onReceiveAd(received: Ad) {
                     interstitialAd = ad
+                    adOwnerActivityId = System.identityHashCode(activity)
                     loadingInterstitial = false
                 }
 
@@ -93,7 +106,7 @@ object StartIoAdManager {
         }
 
         val ad = interstitialAd ?: run {
-            preloadInterstitial(activity.applicationContext)
+            preloadInterstitial(activity)
             onDone()
             return
         }
@@ -105,7 +118,7 @@ object StartIoAdManager {
         fun finish() {
             if (!called.compareAndSet(false, true)) return
             showing = false
-            preloadInterstitial(activity.applicationContext)
+            preloadInterstitial(activity)
             onDone()
         }
 
@@ -122,14 +135,15 @@ object StartIoAdManager {
     }
 
     private fun preloadRewarded(context: Context) {
+        val activity = (context as? Activity) ?: activityRef?.get() ?: return
         if (!initialized || loadingRewarded || rewardedAd != null) return
         loadingRewarded = true
 
         runCatching {
-            val ad = StartAppAd(context)
-            ad.loadAd(AdMode.REWARDED_VIDEO, object : AdEventListener {
+            val ad = StartAppAd(activity)            ad.loadAd(AdMode.REWARDED_VIDEO, object : AdEventListener {
                 override fun onReceiveAd(received: Ad) {
                     rewardedAd = ad
+                    adOwnerActivityId = System.identityHashCode(activity)
                     loadingRewarded = false
                 }
 
@@ -158,7 +172,7 @@ object StartIoAdManager {
         }
 
         val ad = rewardedAd ?: run {
-            preloadRewarded(activity.applicationContext)
+            preloadRewarded(activity)
             Toast.makeText(
                 activity,
                 "Anúncio ainda carregando. Tente novamente em alguns segundos.",
@@ -199,8 +213,8 @@ object StartIoAdManager {
     }
 
     fun clearAdState(context: Context) {
-        interstitialAd = null
-        rewardedAd = null
+        activityRef = null
+        clearAdStateInternal()
         loadingInterstitial = false
         loadingRewarded = false
         showing = false
@@ -211,7 +225,17 @@ object StartIoAdManager {
     }
 
     fun onResume(context: Context) {
+        (context as? Activity)?.let { activityRef = WeakReference(it) }
         if (!initialized) initialize(context)
+    }
+
+    private fun clearAdStateInternal() {
+        interstitialAd = null
+        rewardedAd = null
+        loadingInterstitial = false
+        loadingRewarded = false
+        showing = false
+        adOwnerActivityId = 0
     }
 
     private fun canShow(activity: Activity): Boolean =
