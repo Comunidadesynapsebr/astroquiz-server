@@ -197,6 +197,9 @@ async function getReceipt(client, requestIdValue, playerIdValue, route) {
 }
 
 async function beginReceipt(client, requestIdValue, playerIdValue, route) {
+  const existing = await getReceipt(client, requestIdValue, playerIdValue, route);
+  if (existing) return { receipt: existing, fresh: false };
+
   await client.query(
     `INSERT INTO request_receipts(request_id,player_id,route,status,created_at)
      VALUES($1,$2,$3,'processing',$4)
@@ -204,7 +207,9 @@ async function beginReceipt(client, requestIdValue, playerIdValue, route) {
     [requestIdValue, playerIdValue, route, Date.now()],
   );
 
-  return getReceipt(client, requestIdValue, playerIdValue, route);
+  const receipt = await getReceipt(client, requestIdValue, playerIdValue, route);
+  return { receipt, fresh: Boolean(receipt?.status === 'processing' &&
+    receipt?.response_json == null) };
 }
 
 async function finishReceipt(client, requestIdValue, status, body) {
@@ -297,10 +302,14 @@ app.post('/v1/round/start', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const receipt = await beginReceipt(client, rid, id, '/v1/round/start');
-    if (cachedReceiptResponse(res, receipt)) {
-      await client.query('COMMIT');
-      return undefined;
+    const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/round/start');
+    if (!fresh) {
+      if (cachedReceiptResponse(res, receipt)) {
+        await client.query('COMMIT');
+        return undefined;
+      }
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
     }
     if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
@@ -391,10 +400,14 @@ app.post('/v1/round', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const receipt = await beginReceipt(client, rid, id, '/v1/round');
-    if (cachedReceiptResponse(res, receipt)) {
-      await client.query('COMMIT');
-      return undefined;
+    const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/round');
+    if (!fresh) {
+      if (cachedReceiptResponse(res, receipt)) {
+        await client.query('COMMIT');
+        return undefined;
+      }
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
     }
     if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
@@ -572,10 +585,14 @@ app.post('/v1/life/consume', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const receipt = await beginReceipt(client, rid, id, '/v1/life/consume');
-    if (cachedReceiptResponse(res, receipt)) {
-      await client.query('COMMIT');
-      return undefined;
+    const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/life/consume');
+    if (!fresh) {
+      if (cachedReceiptResponse(res, receipt)) {
+        await client.query('COMMIT');
+        return undefined;
+      }
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
     }
     if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
@@ -642,10 +659,14 @@ app.post('/v1/purchase', async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const receipt = await beginReceipt(client, rid, id, '/v1/purchase');
-    if (cachedReceiptResponse(res, receipt)) {
-      await client.query('COMMIT');
-      return undefined;
+    const { receipt, fresh } = await beginReceipt(client, rid, id, '/v1/purchase');
+    if (!fresh) {
+      if (cachedReceiptResponse(res, receipt)) {
+        await client.query('COMMIT');
+        return undefined;
+      }
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
     }
     if (receipt?.status === 'processing') {
       await client.query('ROLLBACK');
