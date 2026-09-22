@@ -47,6 +47,14 @@ CREATE INDEX IF NOT EXISTS idx_answers_run ON answers(run_id);
 CREATE INDEX IF NOT EXISTS idx_receipts_player ON request_receipts(player_id, created_at DESC);
 
 -- Migration helpers for an existing AstroQuiz database:
+-- Normalize legacy rows once before adding the stricter bounds.
+UPDATE players SET coins = LEAST(GREATEST(coins, 0), 999999);
+UPDATE players SET lives = LEAST(GREATEST(lives, 0), 99);
+UPDATE players SET time_bonus_secs = LEAST(GREATEST(time_bonus_secs, 0), 60);
+UPDATE players SET best_score = GREATEST(best_score, 0);
+UPDATE answers SET answer_index = LEAST(GREATEST(answer_index, -1), 7);
+UPDATE answers SET elapsed_ms = LEAST(GREATEST(elapsed_ms, 0), 60000);
+
 ALTER TABLE players
   DROP CONSTRAINT IF EXISTS players_coins_check;
 ALTER TABLE players
