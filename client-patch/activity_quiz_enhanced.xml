@@ -1,0 +1,148 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@color/space_bg"
+    android:paddingTop="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="16dp"
+        android:paddingVertical="8dp">
+
+        <TextView
+            android:id="@+id/tvQuestionNumber"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="1 / 8"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp"
+            android:textStyle="bold"/>
+
+        <TextView
+            android:id="@+id/tvLives"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="❤️❤️❤️"
+            android:textSize="16sp"
+            android:layout_marginEnd="12dp"/>
+
+        <TextView
+            android:id="@+id/tvScore"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0 pts"
+            android:textColor="@color/gold"
+            android:textSize="14sp"
+            android:textStyle="bold"/>
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvEventTag"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:layout_marginBottom="4dp"
+        android:background="@drawable/bg_card"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="5dp"
+        android:text="🚀 EXPEDIÇÃO"
+        android:textColor="@color/star_blue_light"
+        android:textSize="11sp"
+        android:textStyle="bold"
+        android:visibility="gone"/>
+
+    <TextView
+        android:id="@+id/tvCombo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="5dp"
+        android:text=""
+        android:textColor="@color/gold"
+        android:textSize="15sp"
+        android:textStyle="bold"/>
+
+    <ProgressBar
+        android:id="@+id/timerBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="7dp"
+        android:layout_marginHorizontal="16dp"
+        android:layout_marginBottom="10dp"
+        android:max="100"
+        android:progress="100"
+        android:progressDrawable="@drawable/bg_progress_timer"/>
+
+    <androidx.cardview.widget.CardView
+        android:layout_width="match_parent"
+        android:layout_height="220dp"
+        android:layout_marginHorizontal="14dp"
+        android:layout_marginBottom="10dp"
+        app:cardCornerRadius="18dp"
+        app:cardElevation="7dp"
+        app:cardBackgroundColor="@color/space_card">
+
+        <ImageView
+            android:id="@+id/imgQuestion"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:padding="6dp"
+            android:scaleType="fitCenter"
+            android:contentDescription="@string/question_image"/>
+    </androidx.cardview.widget.CardView>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="14dp"
+            android:paddingBottom="16dp">
+
+            <TextView
+                android:id="@+id/tvQuestion"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginBottom="12dp"
+                android:background="@drawable/bg_card"
+                android:lineSpacingExtra="4dp"
+                android:padding="16dp"
+                android:text="Pergunta"
+                android:textColor="@color/text_primary"
+                android:textSize="16sp"
+                android:textStyle="bold"/>
+
+            <TextView
+                android:id="@+id/btnAnswer0"
+                style="@style/AstroQuizAnswer"
+                android:text="Alternativa A"/>
+
+            <TextView
+                android:id="@+id/btnAnswer1"
+                style="@style/AstroQuizAnswer"
+                android:text="Alternativa B"/>
+
+            <TextView
+                android:id="@+id/btnAnswer2"
+                style="@style/AstroQuizAnswer"
+                android:text="Alternativa C"/>
+
+            <TextView
+                android:id="@+id/btnAnswer3"
+                style="@style/AstroQuizAnswer"
+                android:text="Alternativa D"/>
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>
