@@ -8,8 +8,7 @@ import com.startapp.sdk.adsbase.AdDisplayListener
 import com.startapp.sdk.adsbase.StartAppAd
 import com.startapp.sdk.adsbase.StartAppSDK
 import com.startapp.sdk.adsbase.adlisteners.AdEventListener
-import com.startapp.sdk.adsbase.adlisteners.AdMode
-import com.startapp.sdk.adsbase.adlisteners.VideoListener
+import com.startapp.sdk.adsbase.StartAppAd.AdMode
 import java.util.concurrent.atomic.AtomicBoolean
 
 object StartIoAdManager {
@@ -183,11 +182,11 @@ object StartIoAdManager {
         }
 
         try {
-            ad.setVideoListener(VideoListener {
+            ad.setVideoListener {
                 if (rewarded.compareAndSet(false, true)) {
                     onRewarded()
                 }
-            })
+            }
             ad.showAd(object : AdDisplayListener {
                 override fun adHidden(ad: Ad) = finish()
                 override fun adDisplayed(ad: Ad) = Unit
