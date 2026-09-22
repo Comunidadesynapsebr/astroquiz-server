@@ -95,7 +95,7 @@
             android:layout_height="match_parent"
             android:padding="6dp"
             android:scaleType="fitCenter"
-            android:contentDescription="@string/question_image"/>
+            android:contentDescription="Imagem da pergunta"/>
     </androidx.cardview.widget.CardView>
 
     <ScrollView
@@ -126,22 +126,62 @@
 
             <TextView
                 android:id="@+id/btnAnswer0"
-                style="@style/AstroQuizAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="58dp"
+                android:layout_marginBottom="10dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_answer_neutral"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
                 android:text="Alternativa A"/>
 
             <TextView
                 android:id="@+id/btnAnswer1"
-                style="@style/AstroQuizAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="58dp"
+                android:layout_marginBottom="10dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_answer_neutral"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
                 android:text="Alternativa B"/>
 
             <TextView
                 android:id="@+id/btnAnswer2"
-                style="@style/AstroQuizAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="58dp"
+                android:layout_marginBottom="10dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_answer_neutral"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
                 android:text="Alternativa C"/>
 
             <TextView
                 android:id="@+id/btnAnswer3"
-                style="@style/AstroQuizAnswer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="58dp"
+                android:layout_marginBottom="10dp"
+                android:gravity="center_vertical"
+                android:paddingHorizontal="18dp"
+                android:paddingVertical="12dp"
+                android:background="@drawable/bg_answer_neutral"
+                android:textColor="@color/text_primary"
+                android:textSize="15sp"
+                android:textStyle="bold"
                 android:text="Alternativa D"/>
         </LinearLayout>
     </ScrollView>
