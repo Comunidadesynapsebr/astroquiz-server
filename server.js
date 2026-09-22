@@ -49,6 +49,8 @@ const CATEGORY_SET = new Set(CATEGORY_IDS);
 
 const RATE_WINDOW_MS = 60_000;
 const RATE_LIMIT = 90;
+const ROUND_TTL_MS = 15 * 60 * 1000;
+const RECEIPT_STALE_MS = 10 * 60 * 1000;
 const rateBuckets = new Map();
 
 function json(res, data, status = 200) {
@@ -198,7 +200,25 @@ async function getReceipt(client, requestIdValue, playerIdValue, route) {
 
 async function beginReceipt(client, requestIdValue, playerIdValue, route) {
   const existing = await getReceipt(client, requestIdValue, playerIdValue, route);
-  if (existing) return { receipt: existing, fresh: false };
+  if (existing) {
+    const stale = existing.status === 'processing' &&
+      existing.response_json == null &&
+      Date.now() - Number(existing.created_at || 0) > RECEIPT_STALE_MS;
+
+    if (stale) {
+      await client.query(
+        `UPDATE request_receipts
+         SET status='processing',response_status=NULL,response_json=NULL,
+             created_at=$2,completed_at=NULL
+         WHERE request_id=$1`,
+        [requestIdValue, Date.now()],
+      );
+      const refreshed = await getReceipt(client, requestIdValue, playerIdValue, route);
+      return { receipt: refreshed, fresh: true };
+    }
+
+    return { receipt: existing, fresh: false };
+  }
 
   await client.query(
     `INSERT INTO request_receipts(request_id,player_id,route,status,created_at)
@@ -420,6 +440,15 @@ app.post('/v1/round', async (req, res) => {
     }
 
     const run = runResult.rows[0];
+
+    if (Date.now() - Number(run.created_at) > ROUND_TTL_MS) {
+      await client.query('UPDATE runs SET closed=TRUE WHERE run_id=$1', [runId]);
+      const response = { error: 'run_expired' };
+      await finishReceipt(client, rid, 410, response);
+      await client.query('COMMIT');
+      return json(res, response, 410);
+    }
+
     if (run.closed) {
       const response = { error: 'run_already_closed' };
       await finishReceipt(client, rid, 409, response);
