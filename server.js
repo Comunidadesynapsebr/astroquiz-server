@@ -4,29 +4,722 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  ASTROQUIZ_CONTRACT,
+  CATALOG,
+  CATEGORY_IDS,
+  FREE_CATEGORIES,
+  answerMaxTimeMs,
+  comboMultiplier,
+  isInteger,
+  isPlainObject,
+  validateRound,
+} from './security/asteios-artenos.mjs';
 
 const { Pool } = pg;
 const app = express();
+
 app.disable('x-powered-by');
-app.use(express.json({ limit: '32kb' }));
+app.set('trust proxy', 1);
+app.use(express.json({ limit: '32kb', strict: true }));
+
 const PORT = Number(process.env.PORT || 10000);
 const DATABASE_URL = process.env.DATABASE_URL;
-if (!DATABASE_URL) { console.error('DATABASE_URL is required.'); process.exit(1); }
-const pool = new Pool({ connectionString: DATABASE_URL, ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined, max: 10, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 });
+if (!DATABASE_URL) {
+  console.error('DATABASE_URL is required.');
+  process.exit(1);
+}
+
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production'
+    ? { rejectUnauthorized: false }
+    : undefined,
+  max: 10,
+  idleTimeoutMillis: 30_000,
+  connectionTimeoutMillis: 5_000,
+});
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const QUESTIONS = JSON.parse(fs.readFileSync(path.join(__dirname, 'data/questions.json'), 'utf8'));
-const QUESTION_MAP = new Map(QUESTIONS.map(q => [Number(q.id), q]));
-const CATALOG = { p2:{price:150,kind:'category'},p3:{price:150,kind:'category'},p4:{price:220,kind:'category'},p5:{price:150,kind:'category'},p6:{price:220,kind:'category'},p7:{price:250,kind:'category'},p8:{price:220,kind:'category'},p9:{price:350,kind:'category'},p10:{price:350,kind:'category'},p11:{price:220,kind:'category'},p12:{price:350,kind:'category'},p13:{price:220,kind:'category'},life_1:{price:80,kind:'lives',value:1},life_3:{price:200,kind:'lives',value:3},life_5:{price:350,kind:'lives',value:5},time_5:{price:130,kind:'time',value:5},time_10:{price:260,kind:'time',value:10},time_20:{price:480,kind:'time',value:20} };
-function json(res,data,status=200){return res.status(status).json(data)}
-function playerId(req){const id=String(req.get('x-player-id')||'').trim();return id.length>=16&&id.length<=128?id:null}
-function requirePlayer(req,res){const id=playerId(req);if(!id){json(res,{error:'invalid_player'},400);return null}return id}
-function publicState(row){return {player_id:row.player_id,coins:Number(row.coins),lives:Number(row.lives),time_bonus_secs:Number(row.time_bonus_secs),best_score:Number(row.best_score),unlocked:row.unlocked}}
-async function ensurePlayer(client,id){const now=Date.now();await client.query(`INSERT INTO players(player_id,created_at,updated_at) VALUES($1,$2,$2) ON CONFLICT(player_id) DO NOTHING`,[id,now]);const r=await client.query(`SELECT * FROM players WHERE player_id=$1`,[id]);return r.rows[0]}
-app.use((req,res,next)=>{res.setHeader('Access-Control-Allow-Origin','*');res.setHeader('Access-Control-Allow-Methods','GET,POST,OPTIONS');res.setHeader('Access-Control-Allow-Headers','Content-Type,X-Player-Id');res.setHeader('Cache-Control','no-store');if(req.method==='OPTIONS')return res.sendStatus(204);next()});
-app.get('/health',async(_req,res)=>{try{await pool.query('SELECT 1');return json(res,{status:'ok'})}catch{return json(res,{status:'degraded'},503)}});
-app.get('/v1/state',async(req,res)=>{const id=requirePlayer(req,res);if(!id)return;const client=await pool.connect();try{return json(res,publicState(await ensurePlayer(client,id)))}catch{return json(res,{error:'server_error'},500)}finally{client.release()}});
-app.post('/v1/round',async(req,res)=>{const id=requirePlayer(req,res);if(!id)return;const body=req.body||{};const category=String(body.category||'').slice(0,16);const stage=Math.max(1,Math.min(10,Number(body.stage||1)));const hardMode=Boolean(body.hardMode);const answers=Array.isArray(body.answers)?body.answers.slice(0,8):[];if(!category||answers.length===0)return json(res,{error:'invalid_round'},400);const client=await pool.connect();try{await client.query('BEGIN');const player=await ensurePlayer(client,id);const unlocked=String(player.unlocked||'p0|p1').split('|').filter(Boolean);if(!unlocked.includes(category)){await client.query('ROLLBACK');return json(res,{error:'category_locked'},403)}const runId=crypto.randomUUID();await client.query(`INSERT INTO runs(run_id,player_id,category,stage,hard_mode,created_at) VALUES($1,$2,$3,$4,$5,$6)`,[runId,id,category,stage,hardMode,Date.now()]);let correct=0,score=0;const seen=new Set();for(const a of answers){const qid=Number(a?.questionId);if(seen.has(qid))continue;seen.add(qid);const q=QUESTION_MAP.get(qid);if(!q||String(q.assetId)!==category){await client.query('ROLLBACK');return json(res,{error:'question_category_mismatch'},400)}const answerIndex=Number(a?.answerIndex);const elapsed=Math.max(0,Math.min(60000,Number(a?.elapsedMs||0)));const baseTime=hardMode?Math.max(8500,11000-(stage-1)*250):Math.max(14000,18000-(stage-1)*500);const maxTime=baseTime+Math.min(60,Number(player.time_bonus_secs||0))*1000;const ok=Number.isInteger(answerIndex)&&answerIndex>=0&&answerIndex===Number(q.correta)&&elapsed<=maxTime;if(ok){correct++;score+=hardMode?20:10}await client.query(`INSERT INTO answers(run_id,question_id,answer_index,elapsed_ms,correct,created_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(run_id,question_id) DO NOTHING`,[runId,qid,answerIndex,elapsed,ok,Date.now()])}const reward=correct*2;const newCoins=Math.min(999999,Number(player.coins)+reward);const newBest=Math.max(Number(player.best_score),score);await client.query(`UPDATE players SET coins=$1,best_score=$2,updated_at=$3 WHERE player_id=$4`,[newCoins,newBest,Date.now(),id]);await client.query(`UPDATE runs SET closed=TRUE WHERE run_id=$1`,[runId]);const latest=await client.query('SELECT * FROM players WHERE player_id=$1',[id]);await client.query('COMMIT');return json(res,{runId,score,correct,total:answers.length,coins:newCoins,coinsAwarded:reward,bestScore:newBest,lives:Number(latest.rows[0].lives),time_bonus_secs:Number(latest.rows[0].time_bonus_secs),unlocked:latest.rows[0].unlocked})}catch(e){await client.query('ROLLBACK').catch(()=>{});console.error(e);return json(res,{error:'server_error'},500)}finally{client.release()}});
-app.post('/v1/life/consume',async(req,res)=>{const id=requirePlayer(req,res);if(!id)return;const client=await pool.connect();try{await client.query('BEGIN');const player=await ensurePlayer(client,id);if(Number(player.lives)<=0){await client.query('ROLLBACK');return json(res,{error:'no_extra_life',state:publicState(player)},409)}const r=await client.query(`UPDATE players SET lives=lives-1,updated_at=$1 WHERE player_id=$2 RETURNING *`,[Date.now(),id]);await client.query('COMMIT');return json(res,publicState(r.rows[0]))}catch{await client.query('ROLLBACK').catch(()=>{});return json(res,{error:'server_error'},500)}finally{client.release()}});
-app.post('/v1/purchase',async(req,res)=>{const id=requirePlayer(req,res);if(!id)return;const item=CATALOG[String(req.body?.itemId||'')];if(!item)return json(res,{error:'invalid_item'},400);const client=await pool.connect();try{await client.query('BEGIN');const player=await ensurePlayer(client,id);let unlocked=String(player.unlocked||'p0|p1').split('|').filter(Boolean);if(item.kind==='category'&&unlocked.includes(String(req.body.itemId))){await client.query('COMMIT');return json(res,publicState(player))}if(Number(player.coins)<item.price){await client.query('ROLLBACK');return json(res,{error:'insufficient_coins',state:publicState(player)},409)}let coins=Number(player.coins)-item.price;let lives=Number(player.lives),time=Number(player.time_bonus_secs);if(item.kind==='lives')lives=Math.min(99,lives+item.value);if(item.kind==='time')time=Math.min(60,time+item.value);if(item.kind==='category')unlocked=[...new Set([...unlocked,String(req.body.itemId)])];const r=await client.query(`UPDATE players SET coins=$1,lives=$2,time_bonus_secs=$3,unlocked=$4,updated_at=$5 WHERE player_id=$6 RETURNING *`,[coins,lives,time,unlocked.join('|'),Date.now(),id]);await client.query('COMMIT');return json(res,publicState(r.rows[0]))}catch{await client.query('ROLLBACK').catch(()=>{});return json(res,{error:'server_error'},500)}finally{client.release()}});
-app.use((_req,res)=>json(res,{error:'not_found'},404));
-app.listen(PORT,()=>console.log(`AstroQuiz authority listening on ${PORT}`));
+const QUESTIONS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'data/questions.json'), 'utf8'),
+);
+const QUESTION_MAP = new Map(QUESTIONS.map((q) => [Number(q.id), q]));
+const CATEGORY_SET = new Set(CATEGORY_IDS);
+
+const RATE_WINDOW_MS = 60_000;
+const RATE_LIMIT = 90;
+const rateBuckets = new Map();
+
+function json(res, data, status = 200) {
+  return res.status(status).json(data);
+}
+
+function secureHeaders(res) {
+  res.setHeader('Cache-Control', 'no-store, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+}
+
+function playerId(req) {
+  const id = String(req.get('x-player-id') || '').trim();
+  return /^[A-Za-z0-9_-]{16,128}$/.test(id) ? id : null;
+}
+
+function requestId(req) {
+  const id = String(req.get('x-request-id') || '').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)
+    ? id
+    : null;
+}
+
+function requirePlayer(req, res) {
+  const id = playerId(req);
+  if (!id) {
+    json(res, { error: 'invalid_player' }, 400);
+    return null;
+  }
+  return id;
+}
+
+function requireRequestId(req, res) {
+  const id = requestId(req);
+  if (!id) {
+    json(res, { error: 'invalid_request_id' }, 400);
+    return null;
+  }
+  return id;
+}
+
+function clientRateKey(req) {
+  return playerId(req) || req.ip || 'unknown';
+}
+
+function consumeRateLimit(req) {
+  const now = Date.now();
+  const key = clientRateKey(req);
+  const bucket = rateBuckets.get(key);
+
+  if (!bucket || now - bucket.startedAt >= RATE_WINDOW_MS) {
+    rateBuckets.set(key, { startedAt: now, count: 1 });
+    return true;
+  }
+
+  if (bucket.count >= RATE_LIMIT) return false;
+  bucket.count += 1;
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, bucket] of rateBuckets) {
+    if (now - bucket.startedAt >= RATE_WINDOW_MS * 2) {
+      rateBuckets.delete(key);
+    }
+  }
+}, RATE_WINDOW_MS * 2).unref();
+
+app.use((req, res, next) => {
+  secureHeaders(res);
+
+  if (!consumeRateLimit(req)) {
+    res.setHeader('Retry-After', '60');
+    return json(res, { error: 'rate_limited' }, 429);
+  }
+
+  const configuredOrigin = String(process.env.ALLOWED_ORIGIN || '').trim();
+  if (configuredOrigin && req.get('origin') === configuredOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', configuredOrigin);
+    res.setHeader('Vary', 'Origin');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type,X-Player-Id,X-Request-Id,X-AstroQuiz-Version');
+  }
+
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+function publicState(row) {
+  return {
+    player_id: row.player_id,
+    coins: Number(row.coins),
+    lives: Number(row.lives),
+    time_bonus_secs: Number(row.time_bonus_secs),
+    best_score: Number(row.best_score),
+    unlocked: String(row.unlocked || 'p0|p1'),
+  };
+}
+
+function releaseContractHeaders(req, res) {
+  const requestedVersion = String(req.get('x-astroquiz-version') || '').trim();
+  if (requestedVersion && requestedVersion !== ASTROQUIZ_CONTRACT.version) {
+    return json(res, { error: 'unsupported_app_version' }, 426);
+  }
+  return null;
+}
+
+async function ensurePlayer(client, id) {
+  const now = Date.now();
+  await client.query(
+    `INSERT INTO players(player_id,created_at,updated_at)
+     VALUES($1,$2,$2)
+     ON CONFLICT(player_id) DO NOTHING`,
+    [id, now],
+  );
+  const result = await client.query(
+    'SELECT * FROM players WHERE player_id=$1',
+    [id],
+  );
+  return result.rows[0];
+}
+
+async function getReceipt(client, requestIdValue, playerIdValue, route) {
+  const result = await client.query(
+    `SELECT request_id, player_id, route, status, response_status, response_json
+     FROM request_receipts
+     WHERE request_id=$1
+     FOR UPDATE`,
+    [requestIdValue],
+  );
+
+  if (result.rowCount === 0) return null;
+
+  const row = result.rows[0];
+  if (row.player_id !== playerIdValue || row.route !== route) {
+    const error = new Error('idempotency_conflict');
+    error.code = 'idempotency_conflict';
+    throw error;
+  }
+
+  return row;
+}
+
+async function beginReceipt(client, requestIdValue, playerIdValue, route) {
+  await client.query(
+    `INSERT INTO request_receipts(request_id,player_id,route,status,created_at)
+     VALUES($1,$2,$3,'processing',$4)
+     ON CONFLICT(request_id) DO NOTHING`,
+    [requestIdValue, playerIdValue, route, Date.now()],
+  );
+
+  return getReceipt(client, requestIdValue, playerIdValue, route);
+}
+
+async function finishReceipt(client, requestIdValue, status, body) {
+  await client.query(
+    `UPDATE request_receipts
+       SET status='completed', response_status=$2, response_json=$3::jsonb,
+           completed_at=$4
+     WHERE request_id=$1`,
+    [requestIdValue, status, JSON.stringify(body), Date.now()],
+  );
+}
+
+function cachedReceiptResponse(res, receipt) {
+  if (!receipt || receipt.status !== 'completed' || receipt.response_json == null) {
+    return false;
+  }
+  return json(res, receipt.response_json, Number(receipt.response_status || 200));
+}
+
+function serverContract() {
+  return {
+    version: ASTROQUIZ_CONTRACT.version,
+    build: ASTROQUIZ_CONTRACT.build,
+    questionsPerRound: ASTROQUIZ_CONTRACT.questionsPerRound,
+    rewardPerCorrect: ASTROQUIZ_CONTRACT.rewardPerCorrect,
+    maxCoins: ASTROQUIZ_CONTRACT.maxCoins,
+  };
+}
+
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('SELECT 1');
+    return json(res, { status: 'ok', contract: serverContract() });
+  } catch {
+    return json(res, { status: 'degraded' }, 503);
+  }
+});
+
+app.get('/v1/config', (_req, res) => {
+  return json(res, {
+    contract: serverContract(),
+    categories: CATEGORY_IDS,
+    freeCategories: FREE_CATEGORIES,
+  });
+});
+
+app.get('/v1/state', async (req, res) => {
+  const versionError = releaseContractHeaders(req, res);
+  if (versionError) return versionError;
+
+  const id = requirePlayer(req, res);
+  if (!id) return;
+
+  const client = await pool.connect();
+  try {
+    return json(res, publicState(await ensurePlayer(client, id)));
+  } catch (error) {
+    console.error(error);
+    return json(res, { error: 'server_error' }, 500);
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/v1/round/start', async (req, res) => {
+  const versionError = releaseContractHeaders(req, res);
+  if (versionError) return versionError;
+
+  const id = requirePlayer(req, res);
+  if (!id) return;
+  const rid = requireRequestId(req, res);
+  if (!rid) return;
+
+  const body = req.body;
+  if (!isPlainObject(body)) return json(res, { error: 'invalid_round' }, 400);
+
+  const category = body.category;
+  const stage = body.stage;
+  const hardMode = body.hardMode;
+
+  if (!isSafeCategory(category)) return json(res, { error: 'invalid_category' }, 400);
+  if (!isInteger(stage) || stage < 1 || stage > ASTROQUIZ_CONTRACT.maxStage) {
+    return json(res, { error: 'invalid_stage' }, 400);
+  }
+  if (typeof hardMode !== 'boolean') {
+    return json(res, { error: 'invalid_hard_mode' }, 400);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const receipt = await beginReceipt(client, rid, id, '/v1/round/start');
+    if (cachedReceiptResponse(res, receipt)) {
+      await client.query('COMMIT');
+      return undefined;
+    }
+    if (receipt?.status === 'processing') {
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
+    }
+
+    const playerResult = await client.query(
+      'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
+      [id],
+    );
+    const player = playerResult.rows[0] || await ensurePlayer(client, id);
+
+    const unlocked = String(player.unlocked || 'p0|p1').split('|').filter(Boolean);
+    if (!unlocked.includes(category)) {
+      const response = { error: 'category_locked' };
+      await finishReceipt(client, rid, 403, response);
+      await client.query('COMMIT');
+      return json(res, response, 403);
+    }
+
+    const poolForCategory = QUESTIONS.filter((q) => String(q.assetId) === category);
+    if (poolForCategory.length < ASTROQUIZ_CONTRACT.questionsPerRound) {
+      await client.query('ROLLBACK');
+      return json(res, { error: 'question_pool_too_small' }, 503);
+    }
+
+    const questions = [...poolForCategory]
+      .sort(() => crypto.randomInt(-1_000_000, 1_000_001))
+      .slice(0, ASTROQUIZ_CONTRACT.questionsPerRound);
+
+    const runId = crypto.randomUUID();
+    const response = {
+      runId,
+      category,
+      stage,
+      hardMode,
+      questionIds: questions.map((q) => Number(q.id)),
+      serverTime: Date.now(),
+    };
+
+    await client.query(
+      `INSERT INTO runs(
+         run_id,player_id,category,stage,hard_mode,question_ids,created_at,closed
+       ) VALUES($1,$2,$3,$4,$5,$6::jsonb,$7,FALSE)`,
+      [runId, id, category, stage, hardMode, JSON.stringify(response.questionIds), Date.now()],
+    );
+
+    await finishReceipt(client, rid, 200, response);
+    await client.query('COMMIT');
+    return json(res, response);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error?.code === 'idempotency_conflict') {
+      return json(res, { error: 'idempotency_conflict' }, 409);
+    }
+    console.error(error);
+    return json(res, { error: 'server_error' }, 500);
+  } finally {
+    client.release();
+  }
+});
+
+function isSafeCategory(category) {
+  return typeof category === 'string' &&
+    category.length <= 16 &&
+    CATEGORY_SET.has(category);
+}
+
+app.post('/v1/round', async (req, res) => {
+  const versionError = releaseContractHeaders(req, res);
+  if (versionError) return versionError;
+
+  const id = requirePlayer(req, res);
+  if (!id) return;
+  const rid = requireRequestId(req, res);
+  if (!rid) return;
+
+  if (!isPlainObject(req.body) || typeof req.body.runId !== 'string' || !req.body.runId.trim()) {
+    return json(res, { error: 'round_start_required' }, 428);
+  }
+
+  const runId = req.body.runId.trim();
+
+  const validation = validateRound(req.body, QUESTION_MAP);
+  if (!validation.ok) return json(res, { error: validation.error }, 400);
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const receipt = await beginReceipt(client, rid, id, '/v1/round');
+    if (cachedReceiptResponse(res, receipt)) {
+      await client.query('COMMIT');
+      return undefined;
+    }
+    if (receipt?.status === 'processing') {
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
+    }
+
+    const runResult = await client.query(
+      `SELECT * FROM runs
+       WHERE run_id=$1 AND player_id=$2
+       FOR UPDATE`,
+      [runId, id],
+    );
+    if (runResult.rowCount !== 1) {
+      const response = { error: 'invalid_run' };
+      await finishReceipt(client, rid, 404, response);
+      await client.query('COMMIT');
+      return json(res, response, 404);
+    }
+
+    const run = runResult.rows[0];
+    if (run.closed) {
+      const response = { error: 'run_already_closed' };
+      await finishReceipt(client, rid, 409, response);
+      await client.query('COMMIT');
+      return json(res, response, 409);
+    }
+
+    if (
+      run.category !== validation.category ||
+      Number(run.stage) !== validation.stage ||
+      Boolean(run.hard_mode) !== validation.hardMode
+    ) {
+      const response = { error: 'run_contract_mismatch' };
+      await finishReceipt(client, rid, 409, response);
+      await client.query('COMMIT');
+      return json(res, response, 409);
+    }
+
+    const expectedIds = new Set(
+      Array.isArray(run.question_ids) ? run.question_ids.map(Number) : [],
+    );
+    if (expectedIds.size !== ASTROQUIZ_CONTRACT.questionsPerRound ||
+        validation.answers.length !== ASTROQUIZ_CONTRACT.questionsPerRound) {
+      const response = { error: 'invalid_round_size' };
+      await finishReceipt(client, rid, 400, response);
+      await client.query('COMMIT');
+      return json(res, response, 400);
+    }
+
+    for (const answer of validation.answers) {
+      if (!expectedIds.has(answer.qid)) {
+        const response = { error: 'question_not_in_run' };
+        await finishReceipt(client, rid, 400, response);
+        await client.query('COMMIT');
+        return json(res, response, 400);
+      }
+    }
+
+    const playerResult = await client.query(
+      'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
+      [id],
+    );
+    const player = playerResult.rows[0] || await ensurePlayer(client, id);
+
+    let correct = 0;
+    let score = 0;
+    let streak = 0;
+    const maxTime = answerMaxTimeMs({
+      hardMode: validation.hardMode,
+      stage: validation.stage,
+      playerTimeBonusSecs: Number(player.time_bonus_secs || 0),
+    });
+
+    for (const answer of validation.answers) {
+      const ok =
+        answer.answerIndex >= 0 &&
+        answer.answerIndex === Number(answer.question.correta) &&
+        answer.elapsedMs <= maxTime;
+
+      if (ok) {
+        correct += 1;
+        streak += 1;
+        score += (validation.hardMode ? ASTROQUIZ_CONTRACT.hardScorePerCorrect
+          : ASTROQUIZ_CONTRACT.normalScorePerCorrect) * comboMultiplier(streak);
+      } else {
+        streak = 0;
+      }
+
+      await client.query(
+        `INSERT INTO answers(
+           run_id,question_id,answer_index,elapsed_ms,correct,created_at
+         ) VALUES($1,$2,$3,$4,$5,$6)`,
+        [
+          runId,
+          answer.qid,
+          answer.answerIndex,
+          answer.elapsedMs,
+          ok,
+          Date.now(),
+        ],
+      );
+    }
+
+    const reward = Math.min(
+      ASTROQUIZ_CONTRACT.maxCoins,
+      correct * ASTROQUIZ_CONTRACT.rewardPerCorrect,
+    );
+    const currentCoins = Number(player.coins);
+    const currentBest = Number(player.best_score);
+    const newCoins = Math.min(
+      ASTROQUIZ_CONTRACT.maxCoins,
+      currentCoins + reward,
+    );
+    const newBest = Math.max(currentBest, score);
+
+    await client.query(
+      `UPDATE players
+       SET coins=$1,best_score=$2,updated_at=$3
+       WHERE player_id=$4`,
+      [newCoins, newBest, Date.now(), id],
+    );
+
+    await client.query(
+      'UPDATE runs SET closed=TRUE WHERE run_id=$1',
+      [runId],
+    );
+
+    const latest = await client.query(
+      'SELECT * FROM players WHERE player_id=$1',
+      [id],
+    );
+
+    const response = {
+      runId,
+      score,
+      correct,
+      total: validation.answers.length,
+      coins: Number(latest.rows[0].coins),
+      coinsAwarded: reward,
+      bestScore: Number(latest.rows[0].best_score),
+      lives: Number(latest.rows[0].lives),
+      time_bonus_secs: Number(latest.rows[0].time_bonus_secs),
+      unlocked: String(latest.rows[0].unlocked || 'p0|p1'),
+    };
+
+    await finishReceipt(client, rid, 200, response);
+    await client.query('COMMIT');
+    return json(res, response);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error?.code === 'idempotency_conflict') {
+      return json(res, { error: 'idempotency_conflict' }, 409);
+    }
+    console.error(error);
+    return json(res, { error: 'server_error' }, 500);
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/v1/life/consume', async (req, res) => {
+  const versionError = releaseContractHeaders(req, res);
+  if (versionError) return versionError;
+
+  const id = requirePlayer(req, res);
+  if (!id) return;
+  const rid = requireRequestId(req, res);
+  if (!rid) return;
+
+  if (!isPlainObject(req.body) || Object.keys(req.body).length !== 0) {
+    return json(res, { error: 'invalid_request_body' }, 400);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const receipt = await beginReceipt(client, rid, id, '/v1/life/consume');
+    if (cachedReceiptResponse(res, receipt)) {
+      await client.query('COMMIT');
+      return undefined;
+    }
+    if (receipt?.status === 'processing') {
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
+    }
+
+    const playerResult = await client.query(
+      'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
+      [id],
+    );
+    const player = playerResult.rows[0] || await ensurePlayer(client, id);
+
+    if (Number(player.lives) <= 0) {
+      const response = { error: 'no_extra_life', state: publicState(player) };
+      await finishReceipt(client, rid, 409, response);
+      await client.query('COMMIT');
+      return json(res, response, 409);
+    }
+
+    const updated = await client.query(
+      `UPDATE players
+       SET lives=lives-1,updated_at=$1
+       WHERE player_id=$2
+       RETURNING *`,
+      [Date.now(), id],
+    );
+
+    const response = publicState(updated.rows[0]);
+    await finishReceipt(client, rid, 200, response);
+    await client.query('COMMIT');
+    return json(res, response);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error?.code === 'idempotency_conflict') {
+      return json(res, { error: 'idempotency_conflict' }, 409);
+    }
+    console.error(error);
+    return json(res, { error: 'server_error' }, 500);
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/v1/purchase', async (req, res) => {
+  const versionError = releaseContractHeaders(req, res);
+  if (versionError) return versionError;
+
+  const id = requirePlayer(req, res);
+  if (!id) return;
+  const rid = requireRequestId(req, res);
+  if (!rid) return;
+
+  if (!isPlainObject(req.body) || Object.keys(req.body).some((key) => key !== 'itemId')) {
+    return json(res, { error: 'invalid_purchase_request' }, 400);
+  }
+
+  const itemId = req.body.itemId;
+  const item = CATALOG[String(itemId || '')];
+  if (!item || !Object.isFrozen(item)) {
+    return json(res, { error: 'invalid_item' }, 400);
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const receipt = await beginReceipt(client, rid, id, '/v1/purchase');
+    if (cachedReceiptResponse(res, receipt)) {
+      await client.query('COMMIT');
+      return undefined;
+    }
+    if (receipt?.status === 'processing') {
+      await client.query('ROLLBACK');
+      return json(res, { error: 'request_in_progress' }, 409);
+    }
+
+    const playerResult = await client.query(
+      'SELECT * FROM players WHERE player_id=$1 FOR UPDATE',
+      [id],
+    );
+    const player = playerResult.rows[0] || await ensurePlayer(client, id);
+    const unlocked = String(player.unlocked || 'p0|p1').split('|').filter(Boolean);
+
+    if (item.kind === 'category' && unlocked.includes(String(itemId))) {
+      const response = publicState(player);
+      await finishReceipt(client, rid, 200, response);
+      await client.query('COMMIT');
+      return json(res, response);
+    }
+
+    if (Number(player.coins) < item.price) {
+      const response = {
+        error: 'insufficient_coins',
+        state: publicState(player),
+      };
+      await finishReceipt(client, rid, 409, response);
+      await client.query('COMMIT');
+      return json(res, response, 409);
+    }
+
+    const coins = Number(player.coins) - item.price;
+    let lives = Number(player.lives);
+    let time = Number(player.time_bonus_secs);
+
+    if (item.kind === 'lives') {
+      lives = Math.min(ASTROQUIZ_CONTRACT.maxLives, lives + item.value);
+    }
+    if (item.kind === 'time') {
+      time = Math.min(ASTROQUIZ_CONTRACT.maxTimeBonusSecs, time + item.value);
+    }
+
+    let nextUnlocked = unlocked;
+    if (item.kind === 'category') {
+      nextUnlocked = [...new Set([...unlocked, String(itemId)])];
+    }
+
+    const updated = await client.query(
+      `UPDATE players
+       SET coins=$1,lives=$2,time_bonus_secs=$3,unlocked=$4,updated_at=$5
+       WHERE player_id=$6
+       RETURNING *`,
+      [coins, lives, time, nextUnlocked.join('|'), Date.now(), id],
+    );
+
+    const response = publicState(updated.rows[0]);
+    await finishReceipt(client, rid, 200, response);
+    await client.query('COMMIT');
+    return json(res, response);
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    if (error?.code === 'idempotency_conflict') {
+      return json(res, { error: 'idempotency_conflict' }, 409);
+    }
+    console.error(error);
+    return json(res, { error: 'server_error' }, 500);
+  } finally {
+    client.release();
+  }
+});
+
+app.use((_req, res) => json(res, { error: 'not_found' }, 404));
+
+app.listen(PORT, () => {
+  console.log(
+    `AstroQuiz authority listening on ${PORT} — contract ${ASTROQUIZ_CONTRACT.version}/${ASTROQUIZ_CONTRACT.build}`,
+  );
+});
